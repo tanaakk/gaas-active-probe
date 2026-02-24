@@ -5,12 +5,12 @@ GAP 基本使用例
 階層的質量操作システムの基本的な呼び出し方法を示す。
 """
 
-from gap import GeometricActiveProbe
+from gap import GAASActiveProbe
 from gap.constants import Layer
 
 
 def main():
-    probe = GeometricActiveProbe()
+    probe = GAASActiveProbe()
 
     # Layer 1 (Micro): 10^6 - 10^8 の質量
     result = probe.operate(target_mass=1e7, layer=Layer.MICRO)

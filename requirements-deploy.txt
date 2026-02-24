@@ -1,0 +1,3 @@
+# デプロイ用（Firebase 連携時に firebase-admin が必要な場合）
+-r requirements.txt
+firebase-admin>=6.0.0

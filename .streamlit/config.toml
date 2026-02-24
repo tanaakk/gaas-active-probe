@@ -1,0 +1,8 @@
+# Streamlit 公開用設定
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false

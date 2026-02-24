@@ -78,15 +78,6 @@ class TransitionExecutor:
                 success=False,
             )
 
-        if vacuum_point.potential_gradient > 1e-4:
-            return PositionShiftResult(
-                origin=current_position,
-                destination=current_position,
-                energy_cost=0.0,
-                state=ExecutionState.ABORTED,
-                success=False,
-            )
-
         # 吸い込まれる経路: 負圧ポイントへ直線移動（エネルギー消費なし）
         destination = vacuum_point.coordinates
 

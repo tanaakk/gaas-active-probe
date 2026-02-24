@@ -43,6 +43,7 @@ class ImpedanceFinalizer:
         target_mass: float,
         layer: Layer,
         raw_boundary: Optional[np.ndarray] = None,
+        centroid_override: Optional[Tuple[float, float, float]] = None,
     ) -> FinalizedContour:
         """
         対象の輪郭を物理的に確定し、不変の幾何形状へ固定する。
@@ -70,7 +71,7 @@ class ImpedanceFinalizer:
             # 質量からスケール不変の球体パラメータを導出
             log_mass = np.log10(target_mass)
             radius = 10 ** (log_mass / 6 - 2)  # スケール不変の半径公式
-            centroid = (0.0, 0.0, 0.0)
+            centroid = centroid_override or (0.0, 0.0, 0.0)
 
         # インピーダンス: 質量/周波数比の逆数（最小神経確立）
         impedance = target_mass / (config.base_frequency * radius)
@@ -88,6 +89,28 @@ class ImpedanceFinalizer:
             impedance=impedance,
             layer=layer,
             is_stable=is_stable,
+        )
+
+    def create_contour_at(
+        self,
+        target_mass: float,
+        layer: Layer,
+        centroid: Tuple[float, float, float],
+    ) -> FinalizedContour:
+        """
+        指定座標に質量輪郭を配置する（三つ巴モデル等の可視化用）。
+
+        Args:
+            target_mass: 対象質量
+            layer: 階層
+            centroid: 球体の中心座標 (x, y, z)
+
+        Returns:
+            確定された輪郭（ラスト）
+        """
+        return self.establish_contour(
+            target_mass, layer,
+            centroid_override=centroid,
         )
 
     def calibrate_geometry(

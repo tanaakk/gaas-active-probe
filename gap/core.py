@@ -39,7 +39,7 @@ class OperationResult:
     idle_reason: Optional[str]  # IDLE 時の理由
 
 
-class GeometricActiveProbe:
+class GAASActiveProbe:
     """
     階層的質量操作システムのメインオーケストレーター。
 

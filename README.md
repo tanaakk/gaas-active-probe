@@ -1,4 +1,4 @@
-# GAP — Geometric Active Probe (GAAS Active Probe)
+# GAP — GAAS Active Probe
 
 本リポジトリは、わらしべ長者の幾何学的拡張である。100万から10京に至るまで、大数の操作はすべて、空間の歪み（負圧）を利用した最小作用の帰結として記述される。
 
@@ -8,7 +8,7 @@
 
 ## 概要
 
-GAP（Geometric Active Probe）は、対象を「特定の周波数を持つ球体（質点）」として定義し、その周波数照射と最小神経確立によって、コストゼロの**負圧ポイント（特異点）**を発見・通過するための階層的質量操作システムである。
+GAP（GAAS Active Probe）は、対象を「特定の周波数を持つ球体（質点）」として定義し、その周波数照射と最小神経確立によって、コストゼロの**負圧ポイント（特異点）**を発見・通過するための階層的質量操作システムである。
 
 操作対象は、小規模な個体（$10^6$ 単位）から、都市規模（$10^{10}$ 単位）、地球・国家規模（$10^{16}$ 単位）を経て、全事象の総体（$10^{17}$〜京単位）までを同一の数理モデルで扱う。
 
@@ -43,12 +43,45 @@ pip install -r requirements.txt
 ## 使用例
 
 ```python
-from gap import GeometricActiveProbe
+from gap import GAASActiveProbe
 from gap.constants import Layer
 
-probe = GeometricActiveProbe()
+probe = GAASActiveProbe()
 result = probe.operate(target_mass=1e8, layer=Layer.MICRO)
 ```
+
+## 無料で公開する
+
+Streamlit アプリを無料ホスティングで公開する方法: [docs/FREE_HOSTING.md](docs/FREE_HOSTING.md)
+
+- **Streamlit Community Cloud**（推奨）— GitHub 連携で数分で公開
+- **Hugging Face Spaces** — ML コミュニティで人気
+- **Render** — 無料枠 750 時間/月
+
+---
+
+## 可視化（点群グラフ）
+
+### Streamlit アプリ — ローカルプレビュー
+
+```bash
+# 方法1: 仮想環境付き（推奨）
+./scripts/run_local.sh
+
+# 方法2: 直接実行
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+起動後、ブラウザで **http://localhost:8501** を開く。
+
+### 静的 HTML 出力
+
+```bash
+python examples/visualize_vacuum_path.py
+```
+
+`vacuum_path_visualization.html` が生成されます。ブラウザで開いてインタラクティブに操作できます。
 
 ## ライセンス
 
