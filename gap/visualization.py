@@ -283,7 +283,8 @@ def create_base_establishment_figure(
         if frame < learning_complete_frame:
             return
         progress = (frame - learning_complete_frame) / max(1, n_orbit_frames - learning_complete_frame)
-        opacity = min(0.5, 0.15 + 0.35 * progress)
+        # 白い球・接続線が隠れないよう不透明度を抑える
+        opacity = min(0.25, 0.08 + 0.17 * progress)
         n_grid = 25
         xg = np.linspace(-10, 10, n_grid)
         yg = np.linspace(-10, 10, n_grid)
@@ -296,11 +297,11 @@ def create_base_establishment_figure(
             0,
             go.Surface(
                 x=X, y=Y, z=Z,
-                colorscale=[[0, "rgba(40,80,120,0.5)"], [0.5, "rgba(30,90,140,0.4)"], [1, "rgba(20,100,160,0.3)"]],
+                colorscale=[[0, "rgba(40,80,120,0.4)"], [0.5, "rgba(30,90,140,0.3)"], [1, "rgba(20,100,160,0.25)"]],
                 opacity=opacity,
                 showscale=False,
                 contours=dict(
-                    z=dict(show=True, usecolormap=False, project=dict(z=True), color="rgba(120,180,220,0.8)"),
+                    z=dict(show=True, usecolormap=False, project=dict(z=True), color="rgba(120,180,220,0.4)"),
                 ),
                 name="等高線（学習完了）",
             ),
@@ -322,52 +323,86 @@ def create_base_establishment_figure(
                 )
             )
 
-        # 白い球（プローブ）
+        # 白い球（プローブ）— 球の直後に固定（トレース順を安定化）
         traces.append(
             go.Scatter3d(
                 x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
                 mode="markers",
-                marker=dict(size=12, color="white", symbol="circle", line=dict(width=2, color="white")),
+                marker=dict(size=14, color="white", symbol="circle", line=dict(width=2, color="white"), opacity=1),
                 name="白い球（プローブ）",
             )
         )
 
-        # HITSCAN — 赤、青、緑と一つずつパルスを飛ばし接続していく
-        if frame >= hitscan_start:
-            n_hitscan = hitplan_start - hitscan_start
-            phase_in_hitscan = frame - hitscan_start
-            n_connected = min(3, max(1, 1 + phase_in_hitscan // max(1, n_hitscan // 3)))
-            for i in range(n_connected):
-                pos = pos_list[i]
-                t = np.linspace(0, 1, 40)
-                wave = 0.4 * np.sin(t * 25) * (1 - t)
-                x = probe_position[0] + t * (pos[0] - probe_position[0]) + wave * (pos[1] - probe_position[1]) * 0.15
-                y = probe_position[1] + t * (pos[1] - probe_position[1]) - wave * (pos[0] - probe_position[0]) * 0.15
-                z = probe_position[2] + t * (pos[2] - probe_position[2])
-                traces.append(
-                    go.Scatter3d(
-                        x=x, y=y, z=z,
-                        mode="lines",
-                        line=dict(color=colors[i], width=4, dash="dot"),
-                        opacity=0.7,
-                        name="HITSCAN 高周波照射" if frame == hitscan_start and i == 0 else None,
-                        showlegend=(frame == hitscan_start and i == 0),
-                    )
+        # HITSCAN — 赤・青・緑の点線を順に接続（赤: 5, 青: 8, 緑: 12）
+        # 表示する線のみ追加（visible はアニメーションで効かないため）
+        hitscan_red_frame = 5
+        hitscan_blue_frame = 8
+        hitscan_green_frame = 12
+        n_connected = (1 if frame >= hitscan_red_frame else 0) + (1 if frame >= hitscan_blue_frame else 0) + (1 if frame >= hitscan_green_frame else 0)
+        for i in range(n_connected):
+            pos = pos_list[i]
+            t = np.linspace(0, 1, 60)
+            wave = 0.4 * np.sin(t * 25) * (1 - t)
+            x = probe_position[0] + t * (pos[0] - probe_position[0]) + wave * (pos[1] - probe_position[1]) * 0.15
+            y = probe_position[1] + t * (pos[1] - probe_position[1]) - wave * (pos[0] - probe_position[0]) * 0.15
+            z = probe_position[2] + t * (pos[2] - probe_position[2])
+            dash_len, gap_len = 4, 2
+            n_pts = len(t)
+            x_dash, y_dash, z_dash = [], [], []
+            k = 0
+            while k < n_pts:
+                for _ in range(dash_len):
+                    if k < n_pts:
+                        x_dash.append(float(x[k]))
+                        y_dash.append(float(y[k]))
+                        z_dash.append(float(z[k]))
+                        k += 1
+                if k < n_pts:
+                    x_dash.append(np.nan)
+                    y_dash.append(np.nan)
+                    z_dash.append(np.nan)
+                    k += gap_len
+            traces.append(
+                go.Scatter3d(
+                    x=x_dash, y=y_dash, z=z_dash,
+                    mode="lines",
+                    line=dict(color=colors[i], width=6),
+                    opacity=1.0,
+                    name="HITSCAN 高周波照射" if frame == hitscan_red_frame and i == 0 else None,
+                    showlegend=(frame == hitscan_red_frame and i == 0),
                 )
+            )
 
         # HITPLAN — 神経接続が安定し、３つ巴の回転によるマッピングを描く
         if frame >= hitplan_start:
-            # ３つ巴の回転によるマッピング（軌道の円）
-            theta_map = np.linspace(0, 2 * np.pi, 50)
+            # ３つ巴の回転によるマッピング（軌道の円・点線）
+            theta_map = np.linspace(0, 2 * np.pi, 60)
             x_map = orbit_radius * np.cos(theta_map)
             y_map = orbit_radius * np.sin(theta_map)
             z_map = np.zeros_like(theta_map)
+            # 点線: NaN で区切る
+            dash_len, gap_len = 3, 2
+            n_pts = len(theta_map)
+            x_dash, y_dash, z_dash = [], [], []
+            k = 0
+            while k < n_pts:
+                for _ in range(dash_len):
+                    if k < n_pts:
+                        x_dash.append(float(x_map[k]))
+                        y_dash.append(float(y_map[k]))
+                        z_dash.append(float(z_map[k]))
+                        k += 1
+                if k < n_pts:
+                    x_dash.append(np.nan)
+                    y_dash.append(np.nan)
+                    z_dash.append(np.nan)
+                    k += gap_len
             map_opacity = 0.2 + 0.25 * min(1.0, (frame - hitplan_start) / max(1, hitseries_start - hitplan_start))
             traces.append(
                 go.Scatter3d(
-                    x=x_map, y=y_map, z=z_map,
+                    x=x_dash, y=y_dash, z=z_dash,
                     mode="lines",
-                    line=dict(color="rgba(150,200,255,0.8)", width=2, dash="dot"),
+                    line=dict(color="rgba(150,200,255,0.8)", width=2),
                     opacity=map_opacity,
                     name="マッピング（回転軌道）" if frame == hitplan_start else None,
                     showlegend=(frame == hitplan_start),
@@ -380,8 +415,8 @@ def create_base_establishment_figure(
                         y=[probe_position[1], pos[1]],
                         z=[probe_position[2], pos[2]],
                         mode="lines",
-                        line=dict(color=colors[i], width=3),
-                        opacity=0.6,
+                        line=dict(color=colors[i], width=4),
+                        opacity=0.85,
                         name="HITPLAN 神経接続" if frame == hitplan_start and i == 0 else None,
                         showlegend=(frame == hitplan_start and i == 0),
                     )
