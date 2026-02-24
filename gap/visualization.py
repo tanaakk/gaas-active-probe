@@ -229,7 +229,7 @@ def create_vacuum_figure(
     ))
 
     fig.update_layout(
-        title="GAP — 三つ巴モデルと負圧ポイントの可視化",
+        title="",
         scene=dict(
             xaxis_title="X（抽象化空間）",
             yaxis_title="Y（抽象化空間）",
@@ -240,6 +240,242 @@ def create_vacuum_figure(
         paper_bgcolor="rgba(20,20,30,1)",
         font=dict(color="white"),
         showlegend=True,
+    )
+
+    return fig
+
+
+def create_base_establishment_figure(
+    positions: Tuple[Tuple[float, float, float], ...] = ((6, 0, 0), (-6, 6, 0), (-6, -6, 0)),
+    probe_position: Tuple[float, float, float] = (0, 0, 5),
+    sphere_radius: float = 0.8,
+    n_orbit_frames: int = 48,
+    orbit_speed: float = 0.15,
+) -> "go.Figure | None":
+    """
+    すり抜け前のフェーズを可視化。
+
+    三つ巴の球が回転・動く姿に高周波をあて、形状を学習する姿を強調。
+    接続なしから始まり、順次 HITSCAN → HITPLAN → HITSERIES が現れる。
+    学習が済むと等高線が現れる。
+    """
+    if not HAS_PLOTLY:
+        return None
+
+    colors = ["#e74c3c", "#3498db", "#2ecc71"]
+    orbit_radius = 6.0
+    base_phases = np.array([0.0, 2 * np.pi / 3, 4 * np.pi / 3])
+
+    def get_orbital_positions(frame: int) -> List[Tuple[float, float, float]]:
+        angles = base_phases + frame * orbit_speed
+        return [
+            (orbit_radius * np.cos(angles[i]), orbit_radius * np.sin(angles[i]), 0.0)
+            for i in range(3)
+        ]
+
+    no_connection_end = int(n_orbit_frames * 0.12)
+    hitscan_start = no_connection_end
+    hitplan_start = int(n_orbit_frames * 0.35)
+    hitseries_start = int(n_orbit_frames * 0.55)
+    learning_complete_frame = int(n_orbit_frames * 0.55)
+
+    def add_contour_landscape(traces_list: list, frame: int) -> None:
+        if frame < learning_complete_frame:
+            return
+        progress = (frame - learning_complete_frame) / max(1, n_orbit_frames - learning_complete_frame)
+        opacity = min(0.5, 0.15 + 0.35 * progress)
+        n_grid = 25
+        xg = np.linspace(-10, 10, n_grid)
+        yg = np.linspace(-10, 10, n_grid)
+        X, Y = np.meshgrid(xg, yg)
+        R2 = X ** 2 + Y ** 2
+        # 空間の下部に穴がある形状（中心が窪む漏斗型）
+        Z = -6 + 0.04 * R2 - 2 * np.exp(-R2 / 40)
+        Z = np.clip(Z, -7, 2)
+        traces_list.insert(
+            0,
+            go.Surface(
+                x=X, y=Y, z=Z,
+                colorscale=[[0, "rgba(40,80,120,0.5)"], [0.5, "rgba(30,90,140,0.4)"], [1, "rgba(20,100,160,0.3)"]],
+                opacity=opacity,
+                showscale=False,
+                contours=dict(
+                    z=dict(show=True, usecolormap=False, project=dict(z=True), color="rgba(120,180,220,0.8)"),
+                ),
+                name="等高線（学習完了）",
+            ),
+        )
+
+    frames = []
+    for frame in range(n_orbit_frames):
+        pos_list = get_orbital_positions(frame)
+        traces = []
+        add_contour_landscape(traces, frame)
+
+        for i, pos in enumerate(pos_list):
+            traces.append(
+                go.Scatter3d(
+                    x=[pos[0]], y=[pos[1]], z=[pos[2]],
+                    mode="markers",
+                    marker=dict(size=sphere_radius * 15, color=colors[i], opacity=0.8, line=dict(width=2, color="white")),
+                    name=["赤", "青", "緑"][i],
+                )
+            )
+
+        # 白い球（プローブ）
+        traces.append(
+            go.Scatter3d(
+                x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
+                mode="markers",
+                marker=dict(size=12, color="white", symbol="circle", line=dict(width=2, color="white")),
+                name="白い球（プローブ）",
+            )
+        )
+
+        # HITSCAN — 赤、青、緑と一つずつパルスを飛ばし接続していく
+        if frame >= hitscan_start:
+            n_hitscan = hitplan_start - hitscan_start
+            phase_in_hitscan = frame - hitscan_start
+            n_connected = min(3, max(1, 1 + phase_in_hitscan // max(1, n_hitscan // 3)))
+            for i in range(n_connected):
+                pos = pos_list[i]
+                t = np.linspace(0, 1, 40)
+                wave = 0.4 * np.sin(t * 25) * (1 - t)
+                x = probe_position[0] + t * (pos[0] - probe_position[0]) + wave * (pos[1] - probe_position[1]) * 0.15
+                y = probe_position[1] + t * (pos[1] - probe_position[1]) - wave * (pos[0] - probe_position[0]) * 0.15
+                z = probe_position[2] + t * (pos[2] - probe_position[2])
+                traces.append(
+                    go.Scatter3d(
+                        x=x, y=y, z=z,
+                        mode="lines",
+                        line=dict(color=colors[i], width=4, dash="dot"),
+                        opacity=0.7,
+                        name="HITSCAN 高周波照射" if frame == hitscan_start and i == 0 else None,
+                        showlegend=(frame == hitscan_start and i == 0),
+                    )
+                )
+
+        # HITPLAN — 神経接続が安定し、３つ巴の回転によるマッピングを描く
+        if frame >= hitplan_start:
+            # ３つ巴の回転によるマッピング（軌道の円）
+            theta_map = np.linspace(0, 2 * np.pi, 50)
+            x_map = orbit_radius * np.cos(theta_map)
+            y_map = orbit_radius * np.sin(theta_map)
+            z_map = np.zeros_like(theta_map)
+            map_opacity = 0.2 + 0.25 * min(1.0, (frame - hitplan_start) / max(1, hitseries_start - hitplan_start))
+            traces.append(
+                go.Scatter3d(
+                    x=x_map, y=y_map, z=z_map,
+                    mode="lines",
+                    line=dict(color="rgba(150,200,255,0.8)", width=2, dash="dot"),
+                    opacity=map_opacity,
+                    name="マッピング（回転軌道）" if frame == hitplan_start else None,
+                    showlegend=(frame == hitplan_start),
+                )
+            )
+            for i, pos in enumerate(pos_list):
+                traces.append(
+                    go.Scatter3d(
+                        x=[probe_position[0], pos[0]],
+                        y=[probe_position[1], pos[1]],
+                        z=[probe_position[2], pos[2]],
+                        mode="lines",
+                        line=dict(color=colors[i], width=3),
+                        opacity=0.6,
+                        name="HITPLAN 神経接続" if frame == hitplan_start and i == 0 else None,
+                        showlegend=(frame == hitplan_start and i == 0),
+                    )
+                )
+
+        # HITSERIES CICD — 継続学習すると空間の下部に穴があることが見えてくる
+        if frame >= hitseries_start:
+            for i, pos in enumerate(pos_list):
+                theta = np.linspace(0, 2 * np.pi, 16)
+                phi = np.linspace(0, np.pi, 10)
+                T, P = np.meshgrid(theta, phi)
+                r = sphere_radius * 1.2
+                x = pos[0] + r * np.sin(P) * np.cos(T)
+                y = pos[1] + r * np.sin(P) * np.sin(T)
+                z = pos[2] + r * np.cos(P)
+                traces.append(
+                    go.Surface(
+                        x=x, y=y, z=z,
+                        colorscale=[[0, colors[i]], [1, colors[i]]],
+                        opacity=0.5,
+                        showscale=False,
+                        name="HITSERIES 形状学習" if frame == hitseries_start and i == 0 else None,
+                    )
+                )
+            # 空間の下部に穴があることが見えてくる
+            hole_opacity = 0.3 + 0.4 * min(1.0, (frame - hitseries_start) / max(1, n_orbit_frames - hitseries_start))
+            traces.append(
+                go.Scatter3d(
+                    x=[0], y=[0], z=[-6],
+                    mode="markers",
+                    marker=dict(size=8, color="gold", symbol="diamond", opacity=hole_opacity, line=dict(width=1, color="yellow")),
+                    name="下部の穴（見えてくる）" if frame == hitseries_start else None,
+                    showlegend=(frame == hitseries_start),
+                )
+            )
+
+        frames.append(go.Frame(data=traces, name=str(frame), layout=go.Layout(title=dict(text=""))))
+
+    pos_list_0 = get_orbital_positions(0)
+    initial_data = []
+    add_contour_landscape(initial_data, 0)
+    for i, pos in enumerate(pos_list_0):
+        initial_data.append(
+            go.Scatter3d(
+                x=[pos[0]], y=[pos[1]], z=[pos[2]],
+                mode="markers",
+                marker=dict(size=sphere_radius * 15, color=colors[i], opacity=0.8, line=dict(width=2, color="white")),
+                name=["赤", "青", "緑"][i],
+            )
+        )
+    initial_data.append(
+        go.Scatter3d(
+            x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
+            mode="markers",
+            marker=dict(size=12, color="white", symbol="circle", line=dict(width=2, color="white")),
+            name="白い球（接続なし）",
+        )
+    )
+
+    fig = go.Figure(data=initial_data, frames=frames)
+    fig.update_layout(
+        title="",
+        scene=dict(
+            xaxis=dict(range=[-10, 10]),
+            yaxis=dict(range=[-10, 10]),
+            zaxis=dict(range=[-5, 10]),
+            aspectmode="cube",
+            bgcolor="rgba(20,20,30,1)",
+        ),
+        paper_bgcolor="rgba(20,20,30,1)",
+        font=dict(color="white"),
+        showlegend=True,
+        updatemenus=[
+            dict(
+                type="buttons",
+                showactive=False,
+                buttons=[
+                    dict(label="▶ 再生", method="animate", args=[None, dict(frame=dict(duration=150, redraw=True), fromcurrent=True)]),
+                    dict(label="⏸ 停止", method="animate", args=[[None], dict(frame=dict(duration=0), mode="immediate")]),
+                ],
+                x=0.1, y=0,
+            ),
+        ],
+        sliders=[
+            dict(
+                active=0,
+                steps=[
+                    dict(args=[[str(f)], dict(frame=dict(duration=0), mode="immediate")], label=str(f), method="animate")
+                    for f in range(n_orbit_frames)
+                ],
+                x=0.1, len=0.9, xanchor="left", y=0,
+                currentvalue=dict(visible=True, prefix="フレーム: ", xanchor="center"),
+            ),
+        ],
     )
 
     return fig
@@ -290,8 +526,8 @@ def _simulate_orbital_with_collisions(
     seed: Optional[int] = None,
 ) -> Tuple[List[np.ndarray], np.ndarray]:
     """
-    ぐるぐる回転しながらぶつかり合い、黄色の穴には入れない三つ巴。
-    隙の一瞬に白い球が潜り抜けるための穴開きタイミングを計算。
+    漏斗型の領域は凸凹しているため、三つの玉は近づいたり離れたりしながら、
+    穴には入れない状態が続く。スロープトイのように並行ではなく不規則な形状。
 
     軌道回転 + 衝突 + 穴への進入禁止。
     """
@@ -300,25 +536,42 @@ def _simulate_orbital_with_collisions(
 
     # 軌道パラメータ: 角速度を少しずつ変えて追い抜き・衝突を発生させる
     angles = np.array([0.0, 2 * np.pi / 3, 4 * np.pi / 3])
-    radii = np.array([basin_radius * 0.85, basin_radius * 0.9, basin_radius * 0.88])
+    base_radii = np.array([basin_radius * 0.85, basin_radius * 0.9, basin_radius * 0.88])
     omegas = np.array([0.8, 0.75, 0.82])  # 微妙に違う速度で追い抜き
 
     min_dist = 2 * sphere_radius
     hole_repel_radius = hole_radius + sphere_radius * 2.0
 
-    def get_pos():
+    # 漏斗の凸凹: 各球の有効半径が時間で変動（近づいたり離れたり）
+    bump_amp = basin_radius * 0.12
+    bump_phases = np.array([0.0, 1.2, 2.5])
+
+    def get_radii(t: float) -> np.ndarray:
+        # 複数周波数の重ね合わせで不規則な凸凹を表現（漏斗型の凸凹）
+        bumps = (
+            np.sin(t * 0.4 + bump_phases) * 0.6
+            + np.sin(t * 0.9 + bump_phases * 1.3) * 0.3
+            + np.sin(t * 1.7 + bump_phases * 0.7) * 0.2
+        )
+        radii = base_radii + bump_amp * bumps
+        return np.clip(radii, hole_repel_radius + 0.3, basin_radius - 0.3)
+
+    def get_pos(t: float):
+        radii = get_radii(t)
         return np.array([
             [radii[i] * np.cos(angles[i]), radii[i] * np.sin(angles[i]), 0.0]
             for i in range(3)
         ])
 
-    positions_per_frame = [np.array([get_pos()[i]]) for i in range(3)]
+    positions_per_frame = [np.array([get_pos(0.0)[i]]) for i in range(3)]
     angles_history = [angles.copy()]
+    t = 0.0
 
     for _ in range(n_frames - 1):
         # 1. 軌道回転（ぐるぐる）
         angles += omegas * dt
-        pos = get_pos()
+        t += dt
+        pos = get_pos(t)
 
         # 2. 球同士の衝突（ぶつかって跳ね返る）
         for i in range(3):
@@ -326,23 +579,19 @@ def _simulate_orbital_with_collisions(
                 diff = pos[j] - pos[i]
                 dist = np.linalg.norm(diff) + 1e-10
                 if dist < min_dist:
-                    normal = diff / dist
                     # 角速度を反転して跳ね返る
                     omegas[i], omegas[j] = -omegas[j] * 0.8, -omegas[i] * 0.8
-                    # 角度を少しずらして重なりを解消
                     angles[i] -= 0.1
                     angles[j] += 0.1
-                    pos = get_pos()
+                    pos = get_pos(t)
 
-        # 3. 黄色の穴には入れない（中心に近づいたら押し返す）
+        # 3. 黄色の穴には入れない（中心に近づいたら押し返す）- 凸凹があっても穴には入れない
+        radii = get_radii(t)
         for i in range(3):
-            r = radii[i]
-            if r < hole_repel_radius:
-                radii[i] = hole_repel_radius + 0.5
+            if radii[i] < hole_repel_radius + 0.5:
                 omegas[i] *= -0.7  # 跳ね返り
-            radii[i] = np.clip(radii[i], hole_repel_radius + 0.3, basin_radius - 0.3)
+        pos = get_pos(t)
 
-        pos = get_pos()
         angles_history.append(angles.copy())
 
         # 4. 記録
@@ -352,14 +601,14 @@ def _simulate_orbital_with_collisions(
                 pos[i].reshape(1, 3),
             ])
 
-    # 隙の一瞬: 三球が一か所に集まった時、反対側に隙ができる
+    # 隙の一瞬: 大きな玉が離れた時、一瞬だけルートがあき、球にぶつからずに黄色い穴に入れる
     angles_arr = np.array(angles_history)
     angles_norm = np.mod(angles_arr, 2 * np.pi)
     angular_spread = np.max(angles_norm, axis=1) - np.min(angles_norm, axis=1)
     # 2πをまたぐ場合の補正
     angular_spread = np.minimum(angular_spread, 2 * np.pi - angular_spread)
-    # 三球が集まっている（spread が小さい）= 隙が開いている
-    hole_open = angular_spread < 1.8
+    # 三球が離れている（spread が大きい ≈ 120°）= 一瞬だけ中心にルートが開く
+    hole_open = angular_spread > 1.85
 
     return positions_per_frame, hole_open
 
@@ -373,7 +622,11 @@ def compute_three_body_animation_frames(
     probe_drop_duration: int = 20,
     probe_start_offset: float = 2.0,
     sphere_radius: float = 0.8,
+    probe_radius: float = 0.3,
     use_collision_mode: bool = True,
+    n_cycles: int = 1,
+    cycle_scale_factor: float = 1.8,
+    transition_frames: int = 15,
 ) -> tuple:
     """
     三体問題のアニメーションフレームを計算する。
@@ -382,66 +635,152 @@ def compute_three_body_animation_frames(
     スケールが一回り小さいプローブが Brachistochrone Curve に沿って
     吸い込まれるように穴をすり抜ける。
 
+    n_cycles > 1 の場合: 大きくなった球がさらに大きな三つ巴を発見し、
+    同様にすり抜けていくことを繰り返す。
+
     Returns:
-        (sphere_positions_per_frame, probe_positions_per_frame, hole_open_frames)
+        (sphere_positions_per_frame, probe_positions_per_frame, hole_open_frames, probe_sizes, sphere_sizes, hole_sizes)
     """
-    if use_collision_mode:
-        sphere_positions, hole_open = _simulate_orbital_with_collisions(
-            n_frames=n_frames,
-            sphere_radius=sphere_radius,
-            hole_radius=hole_radius,
-            basin_radius=orbit_radius,
-            dt=0.15,
-            seed=42,
-        )
-    else:
-        # 従来の回転モード（フォールバック）
-        t = np.linspace(0, 4 * np.pi, n_frames)
-        phases = [0, 2 * np.pi / 3, 4 * np.pi / 3]
-        snag = -0.5 * np.sin(t * 1.8) * np.sin(t * 0.5 + 0.3)
-        sphere_positions = []
-        for i, phase in enumerate(phases):
-            angle = t + phase
-            r = orbit_radius + snag * (1.1 if i == 1 else 1.0)
-            x = r * np.cos(angle)
-            y = r * np.sin(angle)
-            z = orbit_tilt * (r - orbit_radius) * np.sin(t * 1.5)
-            sphere_positions.append(np.column_stack([x, y, z]))
-        dist_from_center = np.array([
-            np.linalg.norm(sphere_positions[i], axis=1)
-            for i in range(3)
-        ])
-        hole_open = np.min(dist_from_center, axis=0) > (orbit_radius - hole_radius)
+    base_probe_size = probe_radius * 15
+    hole_marker_size = 14
+    n_growth_frames = 25
 
-    # プローブが落下を始めるフレーム: 穴が初めて開くタイミング
-    if probe_drop_frame is None:
-        open_frames = np.where(hole_open)[0]
-        probe_drop_frame = int(n_frames * 0.4) if len(open_frames) == 0 else open_frames[len(open_frames) // 3]
+    all_sphere_positions = [[], [], []]
+    all_probe_positions = []
+    all_hole_open = []
+    all_probe_sizes = []
+    all_sphere_sizes = []
+    all_hole_sizes = []
 
-    # プローブ: 待機 → Brachistochrone Curve に沿って吸い込まれるように穴をすり抜け
-    start_pos = (probe_start_offset, 0.0, 5.0)   # やや外側から
-    end_pos = (0.0, 0.0, -5.0)                   # 穴を抜けて下へ
+    current_probe_size = base_probe_size
+    prev_end_pos = None
 
-    probe_path = _brachistochrone_path(
-        np.linspace(0, 1, probe_drop_duration + 1),
-        start_pos,
-        end_pos,
-    )
+    for cycle in range(n_cycles):
+        scale = cycle_scale_factor ** cycle
+        r_orbit = orbit_radius * scale
+        r_sphere = sphere_radius * scale
+        r_hole = hole_radius * scale
+        n_f = n_frames if cycle == 0 else n_frames  # 各サイクル同じフレーム数
 
-    probe_positions = []
-    for frame in range(n_frames):
-        if frame < probe_drop_frame:
-            # 上で待機（スケールが一回り小さいので上に配置）
-            probe_positions.append(list(start_pos))
-        elif frame < probe_drop_frame + probe_drop_duration:
-            # Brachistochrone Curve に沿って吸い込まれる
-            idx = frame - probe_drop_frame
-            probe_positions.append(list(probe_path[idx]))
+        if use_collision_mode:
+            sphere_positions, hole_open = _simulate_orbital_with_collisions(
+                n_frames=n_f,
+                sphere_radius=r_sphere,
+                hole_radius=r_hole,
+                basin_radius=r_orbit,
+                dt=0.15,
+                seed=42 + cycle,
+            )
         else:
-            # 通過完了（下に到達）
-            probe_positions.append(list(end_pos))
+            t = np.linspace(0, 4 * np.pi, n_f)
+            phases = [0, 2 * np.pi / 3, 4 * np.pi / 3]
+            snag = -0.5 * np.sin(t * 1.8) * np.sin(t * 0.5 + 0.3)
+            sphere_positions = []
+            for i, phase in enumerate(phases):
+                angle = t + phase
+                r = r_orbit + snag * (1.1 if i == 1 else 1.0)
+                x = r * np.cos(angle)
+                y = r * np.sin(angle)
+                z = orbit_tilt * (r - r_orbit) * np.sin(t * 1.5)
+                sphere_positions.append(np.column_stack([x, y, z]))
+            dist_from_center = np.array([
+                np.linalg.norm(sphere_positions[i], axis=1)
+                for i in range(3)
+            ])
+            hole_open = np.min(dist_from_center, axis=0) > (r_orbit - r_hole)
 
-    return sphere_positions, probe_positions, hole_open
+        if probe_drop_frame is None:
+            open_frames = np.where(hole_open)[0]
+            pdrop = int(n_f * 0.4) if len(open_frames) == 0 else open_frames[len(open_frames) // 3]
+        else:
+            pdrop = probe_drop_frame
+
+        start_pos = (
+            probe_start_offset * scale,
+            0.0,
+            5.0 * scale,
+        )
+        end_pos = (0.0, 0.0, -5.0 * scale)
+        hole_size_scaled = hole_marker_size * (1.0 + 0.3 * cycle)
+        # 1回目: 白球の膨張を控えめに
+        # 2度目以降: 黄色の枠を少し広げる（小さめに）、通過後に2倍に膨張
+        if cycle >= 1:
+            hole_size_scaled = hole_size_scaled * 1.2
+        if cycle == 0:
+            growth_target = hole_size_scaled * 1.7
+        else:
+            growth_target = current_probe_size * 2.0  # 通り終わったら2倍に膨張
+
+        # 三つ巴の球サイズ: 白球より大きく描く（大きな三つ巴を発見）
+        base_sphere_size = sphere_radius * 15
+        if cycle == 0:
+            sphere_size = base_sphere_size
+        else:
+            # 白球（current_probe_size）より 1.4 倍大きく
+            sphere_size = max(base_sphere_size * scale, current_probe_size * 1.4)
+
+        probe_path = _brachistochrone_path(
+            np.linspace(0, 1, probe_drop_duration + 1),
+            start_pos,
+            end_pos,
+        )
+
+        cycle_probe_positions = []
+        cycle_probe_sizes = []
+
+        # サイクル間の遷移: 前サイクルの終了位置から開始位置へ（大きな三つ巴を発見）
+        if cycle > 0 and prev_end_pos is not None:
+            for i in range(transition_frames):
+                s = (i + 1) / (transition_frames + 1)
+                s = s ** 0.5
+                x = prev_end_pos[0] + (start_pos[0] - prev_end_pos[0]) * s
+                y = prev_end_pos[1] + (start_pos[1] - prev_end_pos[1]) * s
+                z = prev_end_pos[2] + (start_pos[2] - prev_end_pos[2]) * s
+                cycle_probe_positions.append([x, y, z])
+                cycle_probe_sizes.append(current_probe_size)
+            for i in range(transition_frames):
+                for j in range(3):
+                    all_sphere_positions[j].append(sphere_positions[j][i])
+                all_hole_open.append(hole_open[i])
+                all_sphere_sizes.append(sphere_size)
+                all_hole_sizes.append(hole_size_scaled)
+            all_probe_positions.extend(cycle_probe_positions)
+            all_probe_sizes.extend(cycle_probe_sizes)
+
+        frame_start = transition_frames if cycle > 0 else 0
+        for frame in range(frame_start, n_f):
+            if frame < pdrop:
+                pos = list(start_pos)
+                size = current_probe_size
+            elif frame < pdrop + probe_drop_duration:
+                idx = frame - pdrop
+                pos = list(probe_path[idx])
+                size = current_probe_size
+            else:
+                pos = list(end_pos)
+                frames_since_pass = frame - (pdrop + probe_drop_duration)
+                if frames_since_pass < n_growth_frames:
+                    s = frames_since_pass / n_growth_frames
+                    s = s ** 0.4
+                    size = current_probe_size + (growth_target - current_probe_size) * s
+                else:
+                    size = growth_target
+                current_probe_size = size
+
+            for j in range(3):
+                all_sphere_positions[j].append(sphere_positions[j][frame])
+            all_hole_open.append(hole_open[frame])
+            all_sphere_sizes.append(sphere_size)
+            all_hole_sizes.append(hole_size_scaled)
+            all_probe_positions.append(pos)
+            all_probe_sizes.append(size)
+
+        prev_end_pos = end_pos
+
+    sphere_positions = [np.array(all_sphere_positions[i]) for i in range(3)]
+    n_total = len(all_probe_positions)
+
+    return sphere_positions, all_probe_positions, np.array(all_hole_open), all_probe_sizes, all_sphere_sizes, all_hole_sizes
 
 
 def create_vacuum_animation_figure(
@@ -450,35 +789,75 @@ def create_vacuum_animation_figure(
     sphere_radius: float = 0.8,
     probe_radius: float = 0.3,
     probe_start_offset: float = 2.0,
+    n_cycles: int = 2,
+    cycle_scale_factor: float = 1.8,
 ) -> "go.Figure | None":
     """
     三体問題＋プローブすり抜けのアニメーション Figure を生成する。
 
     赤・青・緑の球がぐるぐる回り、中心の穴に引っかかり、
     小さいプローブが Brachistochrone Curve に沿って吸い込まれるようにすり抜ける。
+
+    n_cycles > 1 の場合: 大きくなった球がさらに大きな三つ巴を発見し、
+    同様にすり抜けていくことを繰り返す。
     """
     if not HAS_PLOTLY:
         return None
 
-    (sphere_positions, probe_positions, hole_open) = compute_three_body_animation_frames(
+    (sphere_positions, probe_positions, hole_open, probe_sizes, sphere_sizes, hole_sizes) = compute_three_body_animation_frames(
         n_frames=n_frames,
         orbit_radius=orbit_radius,
         probe_start_offset=probe_start_offset,
         sphere_radius=sphere_radius,
+        probe_radius=probe_radius,
         use_collision_mode=True,
+        n_cycles=n_cycles,
+        cycle_scale_factor=cycle_scale_factor,
     )
+
+    n_total = len(probe_positions)
 
     colors = ["#e74c3c", "#3498db", "#2ecc71"]
 
+    # 軸範囲: 複数サイクル時は最大スケールに合わせて拡大
+    max_extent = max(10, orbit_radius * (cycle_scale_factor ** max(0, n_cycles - 1)) * 1.3)
+    axis_range = [-max_extent, max_extent]
+
+    # 等高線付きランドスケープ（大きな白球が下にあることを視覚化）
+    def _add_landscape_contour(traces_list: list, max_ext: float) -> None:
+        n_grid = 25
+        xg = np.linspace(-max_ext, max_ext, n_grid)
+        yg = np.linspace(-max_ext, max_ext, n_grid)
+        X, Y = np.meshgrid(xg, yg)
+        # 盆地形状: 中心が低く（z=-8）、外側ほど高い
+        R2 = X ** 2 + Y ** 2
+        Z = -8 + 0.04 * R2
+        Z = np.clip(Z, -8, max_ext * 0.5)
+        traces_list.append(
+            go.Surface(
+                x=X, y=Y, z=Z,
+                colorscale=[[0, "rgba(30,60,90,0.4)"], [0.5, "rgba(20,80,120,0.3)"], [1, "rgba(10,100,150,0.2)"]],
+                opacity=0.35,
+                showscale=False,
+                contours=dict(
+                    z=dict(show=True, usecolormap=False, project=dict(z=True), color="rgba(120,180,220,0.7)"),
+                ),
+                name="ランドスケープ（等高線）",
+            )
+        )
+
     # 各フレームのデータを構築
     frames = []
-    for frame in range(n_frames):
+    for frame in range(n_total):
         traces_data = []
 
-        # 三球（Surface はアニメーションで扱いにくいので Scatter3d の球で代用）
+        # 等高線ランドスケープ（白球が下にあることを示す）
+        _add_landscape_contour(traces_data, max_extent)
+
+        # 三球（白球より大きく描く — 大きな三つ巴を発見）
+        sphere_size = sphere_sizes[frame]
         for i in range(3):
             pos = sphere_positions[i][frame]
-            # 球を点で表現（サイズで球体感を出す）
             traces_data.append(
                 go.Scatter3d(
                     x=[pos[0]],
@@ -486,7 +865,7 @@ def create_vacuum_animation_figure(
                     z=[pos[2]],
                     mode="markers",
                     marker=dict(
-                        size=sphere_radius * 15,
+                        size=sphere_size,
                         color=colors[i],
                         opacity=0.7,
                         line=dict(width=1, color="white"),
@@ -495,14 +874,15 @@ def create_vacuum_animation_figure(
                 )
             )
 
-        # 黄色の穴（特異点）- 隙が開いている時は強調
+        # 黄色の穴（特異点）- 隙が開いている時は強調。2度目以降は枠を広げて白球と同程度に
         hole_opacity = 0.95 if hole_open[frame] else 0.35
+        hole_size = hole_sizes[frame]
         traces_data.append(
             go.Scatter3d(
                 x=[0], y=[0], z=[0],
                 mode="markers",
                 marker=dict(
-                    size=14,
+                    size=hole_size,
                     color="gold",
                     symbol="diamond",
                     opacity=hole_opacity,
@@ -512,7 +892,7 @@ def create_vacuum_animation_figure(
             )
         )
 
-        # プローブ（小さい球）
+        # プローブ（通過後に黄色の穴より巨大に膨らむ）
         probe_pos = probe_positions[frame]
         traces_data.append(
             go.Scatter3d(
@@ -521,13 +901,13 @@ def create_vacuum_animation_figure(
                 z=[probe_pos[2]],
                 mode="markers",
                 marker=dict(
-                    size=probe_radius * 15,
+                    size=probe_sizes[frame],
                     color="white",
-                    opacity=0.9,
+                    opacity=0.85,
                     symbol="circle",
                     line=dict(width=2, color="cyan"),
                 ),
-                name="プローブ（Brachistochrone）",
+                name="プローブ（通過後膨張）",
             )
         )
 
@@ -540,6 +920,7 @@ def create_vacuum_animation_figure(
 
     # 初期フレームのデータ
     initial_data = []
+    _add_landscape_contour(initial_data, max_extent)
     for i in range(3):
         pos = sphere_positions[i][0]
         initial_data.append(
@@ -547,7 +928,7 @@ def create_vacuum_animation_figure(
                 x=[pos[0]], y=[pos[1]], z=[pos[2]],
                 mode="markers",
                 marker=dict(
-                    size=sphere_radius * 15,
+                    size=sphere_sizes[0],
                     color=colors[i],
                     opacity=0.7,
                     line=dict(width=1, color="white"),
@@ -559,7 +940,7 @@ def create_vacuum_animation_figure(
         go.Scatter3d(
             x=[0], y=[0], z=[0],
             mode="markers",
-            marker=dict(size=14, color="gold", symbol="diamond", opacity=0.35),
+            marker=dict(size=hole_sizes[0], color="gold", symbol="diamond", opacity=0.35),
             name="黄色の穴",
         )
     )
@@ -569,13 +950,13 @@ def create_vacuum_animation_figure(
             x=[probe_pos_0[0]], y=[probe_pos_0[1]], z=[probe_pos_0[2]],
             mode="markers",
             marker=dict(
-                size=probe_radius * 15,
+                size=probe_sizes[0],
                 color="white",
-                opacity=0.9,
+                opacity=0.85,
                 symbol="circle",
                 line=dict(width=2, color="cyan"),
             ),
-            name="プローブ（Brachistochrone）",
+            name="プローブ（通過後膨張）",
         )
     )
 
@@ -586,11 +967,11 @@ def create_vacuum_animation_figure(
 
     # スライダーと再生ボタン
     fig.update_layout(
-        title="GAP — ぐるぐる回転・ぶつかり合い・黄色の穴には入れない三つ巴",
+        title="",
         scene=dict(
-            xaxis=dict(range=[-10, 10]),
-            yaxis=dict(range=[-10, 10]),
-            zaxis=dict(range=[-8, 8]),
+            xaxis=dict(range=axis_range),
+            yaxis=dict(range=axis_range),
+            zaxis=dict(range=axis_range),
             aspectmode="cube",
             bgcolor="rgba(20,20,30,1)",
         ),
@@ -661,6 +1042,230 @@ def create_vacuum_animation_figure(
                     prefix="フレーム: ",
                     xanchor="center",
                 ),
+            ),
+        ],
+    )
+
+    return fig
+
+
+def compute_failure_animation_frames(
+    n_frames: int = 120,
+    orbit_radius: float = 6.0,
+    sphere_radius: float = 0.8,
+    probe_radius: float = 0.3,
+    probe_start_offset: float = 2.0,
+    collision_path_ratio: float = 0.45,
+    blowaway_duration: int = 35,
+) -> tuple:
+    """
+    失敗パターン: 白球が三球に衝突し、カーリングのように吹き飛ばされる。
+
+    ルートが開いていない時（三球が離れていない時）に下降を試み、
+    衝突して怪我をし、吹き飛ばされる。
+    """
+    sphere_positions, hole_open = _simulate_orbital_with_collisions(
+        n_frames=n_frames,
+        sphere_radius=sphere_radius,
+        hole_radius=1.5,
+        basin_radius=orbit_radius,
+        dt=0.15,
+        seed=42,
+    )
+
+    # ルートが開いていないフレームを選ぶ（失敗条件）
+    closed_frames = np.where(~hole_open)[0]
+    pdrop = int(n_frames * 0.35) if len(closed_frames) == 0 else closed_frames[len(closed_frames) // 2]
+
+    start_pos = (probe_start_offset, 0.0, 5.0)
+    end_pos = (0.0, 0.0, -5.0)
+    probe_path = _brachistochrone_path(
+        np.linspace(0, 1, 21),
+        start_pos,
+        end_pos,
+    )
+
+    # 衝突点: パスの途中
+    n_path = len(probe_path)
+    collision_idx = int(n_path * collision_path_ratio)
+    collision_pos = probe_path[collision_idx]
+
+    # 吹き飛び軌道: カーリングのように弧を描いて飛ぶ
+    t_blow = np.linspace(0, 1, blowaway_duration)
+    blow_x = collision_pos[0] + 6 * t_blow + 1.5 * np.sin(t_blow * np.pi)
+    blow_y = collision_pos[1] + 4 * t_blow - 2 * (1 - t_blow) ** 2
+    blow_z = collision_pos[2] - 3 * t_blow - 2 * t_blow ** 2
+    blow_path = np.column_stack([blow_x, blow_y, blow_z])
+
+    n_before = collision_idx + 1
+    n_after = blowaway_duration
+
+    probe_positions = []
+    probe_sizes = []
+    base_size = probe_radius * 15
+
+    for frame in range(n_frames):
+        if frame < pdrop:
+            probe_positions.append(list(start_pos))
+            probe_sizes.append(base_size)
+        elif frame < pdrop + n_before:
+            idx = frame - pdrop
+            probe_positions.append(list(probe_path[idx]))
+            probe_sizes.append(base_size)
+        elif frame < pdrop + n_before + n_after:
+            idx = frame - pdrop - n_before
+            probe_positions.append(list(blow_path[idx]))
+            probe_sizes.append(base_size * 0.9)
+        else:
+            probe_positions.append(list(blow_path[-1]))
+            probe_sizes.append(base_size * 0.9)
+
+    sphere_sizes = [sphere_radius * 15] * n_frames
+    hole_sizes = [14] * n_frames
+
+    return sphere_positions, probe_positions, hole_open, probe_sizes, sphere_sizes, hole_sizes
+
+
+def create_failure_animation_figure(
+    n_frames: int = 120,
+    orbit_radius: float = 6.0,
+    sphere_radius: float = 0.8,
+    probe_radius: float = 0.3,
+    probe_start_offset: float = 2.0,
+) -> "go.Figure | None":
+    """
+    失敗パターン: 白球が三球に衝突し、怪我をしてカーリングのように吹き飛ばされる。
+    """
+    if not HAS_PLOTLY:
+        return None
+
+    (sphere_positions, probe_positions, hole_open, probe_sizes, sphere_sizes, hole_sizes) = (
+        compute_failure_animation_frames(
+            n_frames=n_frames,
+            orbit_radius=orbit_radius,
+            sphere_radius=sphere_radius,
+            probe_radius=probe_radius,
+            probe_start_offset=probe_start_offset,
+        )
+    )
+
+    n_total = len(probe_positions)
+    colors = ["#e74c3c", "#3498db", "#2ecc71"]
+    max_extent = max(10, orbit_radius * 1.3)
+    axis_range = [-max_extent, max_extent]
+
+    frames = []
+    for frame in range(n_total):
+        traces_data = []
+
+        for i in range(3):
+            pos = sphere_positions[i][frame]
+            traces_data.append(
+                go.Scatter3d(
+                    x=[pos[0]], y=[pos[1]], z=[pos[2]],
+                    mode="markers",
+                    marker=dict(
+                        size=sphere_sizes[frame],
+                        color=colors[i],
+                        opacity=0.7,
+                        line=dict(width=1, color="white"),
+                    ),
+                    name=["赤", "青", "緑"][i],
+                )
+            )
+
+        hole_opacity = 0.95 if hole_open[frame] else 0.35
+        traces_data.append(
+            go.Scatter3d(
+                x=[0], y=[0], z=[0],
+                mode="markers",
+                marker=dict(
+                    size=14,
+                    color="gold",
+                    symbol="diamond",
+                    opacity=hole_opacity,
+                    line=dict(width=2, color="yellow"),
+                ),
+                name="黄色の穴",
+            )
+        )
+
+        probe_pos = probe_positions[frame]
+        traces_data.append(
+            go.Scatter3d(
+                x=[probe_pos[0]], y=[probe_pos[1]], z=[probe_pos[2]],
+                mode="markers",
+                marker=dict(
+                    size=probe_sizes[frame],
+                    color="white",
+                    opacity=0.85,
+                    symbol="circle",
+                    line=dict(width=2, color="red"),
+                ),
+                name="白球（衝突で吹き飛び）",
+            )
+        )
+
+        frames.append(go.Frame(data=traces_data, name=str(frame)))
+
+    initial_data = []
+    for i in range(3):
+        pos = sphere_positions[i][0]
+        initial_data.append(
+            go.Scatter3d(
+                x=[pos[0]], y=[pos[1]], z=[pos[2]],
+                mode="markers",
+                marker=dict(size=sphere_sizes[0], color=colors[i], opacity=0.7, line=dict(width=1, color="white")),
+                name=["赤", "青", "緑"][i],
+            )
+        )
+    initial_data.append(
+        go.Scatter3d(
+            x=[0], y=[0], z=[0],
+            mode="markers",
+            marker=dict(size=14, color="gold", symbol="diamond", opacity=0.35),
+            name="黄色の穴",
+        )
+    )
+    initial_data.append(
+        go.Scatter3d(
+            x=[probe_positions[0][0]], y=[probe_positions[0][1]], z=[probe_positions[0][2]],
+            mode="markers",
+            marker=dict(size=probe_sizes[0], color="white", opacity=0.85, symbol="circle", line=dict(width=2, color="red")),
+            name="白球",
+        )
+    )
+
+    fig = go.Figure(data=initial_data, frames=frames)
+    fig.update_layout(
+        title="",
+        scene=dict(
+            xaxis=dict(range=axis_range),
+            yaxis=dict(range=axis_range),
+            zaxis=dict(range=axis_range),
+            aspectmode="cube",
+            bgcolor="rgba(20,20,30,1)",
+        ),
+        paper_bgcolor="rgba(20,20,30,1)",
+        font=dict(color="white"),
+        showlegend=True,
+        updatemenus=[
+            dict(
+                type="buttons",
+                showactive=False,
+                buttons=[
+                    dict(label="▶ 再生", method="animate", args=[None, dict(frame=dict(duration=80, redraw=True), fromcurrent=True)]),
+                    dict(label="⏸ 停止", method="animate", args=[[None], dict(frame=dict(duration=0), mode="immediate")]),
+                ],
+                x=0.1, y=0,
+            ),
+        ],
+        sliders=[
+            dict(
+                active=0,
+                steps=[dict(args=[[str(f)], dict(frame=dict(duration=0), mode="immediate")], label=str(f), method="animate") for f in range(n_total)],
+                x=0.1, len=0.9, xanchor="left", y=0,
+                currentvalue=dict(visible=True, prefix="フレーム: ", xanchor="center"),
             ),
         ],
     )
