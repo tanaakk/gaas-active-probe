@@ -5,11 +5,14 @@ GAP — GAAS Active Probe
 あらゆる事象を同一の幾何学平面で操作する。
 """
 
-from gap.core import GAASActiveProbe
 from gap.constants import Layer, LayerConfig
 
-# 後方互換のエイリアス
-GeometricActiveProbe = GAASActiveProbe
+try:
+    from gap.core import GAASActiveProbe
+    GeometricActiveProbe = GAASActiveProbe
+except ImportError:
+    GAASActiveProbe = None
+    GeometricActiveProbe = None
 
 __all__ = [
     "GAASActiveProbe",
