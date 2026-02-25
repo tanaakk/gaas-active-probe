@@ -279,24 +279,20 @@ def create_base_establishment_figure(
     hitseries_start = int(n_orbit_frames * 0.55)
     learning_complete_frame = int(n_orbit_frames * 0.55)
 
-    def add_contour_landscape(traces_list: list, frame: int) -> None:
-        if frame < learning_complete_frame:
-            return
-        progress = (frame - learning_complete_frame) / max(1, n_orbit_frames - learning_complete_frame)
-        # 白い球・接続線が隠れないよう不透明度を抑える
-        opacity = min(0.25, 0.08 + 0.17 * progress)
-        n_grid = 25
-        xg = np.linspace(-10, 10, n_grid)
-        yg = np.linspace(-10, 10, n_grid)
-        X, Y = np.meshgrid(xg, yg)
-        R2 = X ** 2 + Y ** 2
-        # 空間の下部に穴がある形状（中心が窪む漏斗型）
-        Z = -6 + 0.04 * R2 - 2 * np.exp(-R2 / 40)
-        Z = np.clip(Z, -7, 2)
-        traces_list.insert(
-            0,
+    n_grid = 25
+    xg = np.linspace(-10, 10, n_grid)
+    yg = np.linspace(-10, 10, n_grid)
+    X, Y = np.meshgrid(xg, yg)
+    R2 = X ** 2 + Y ** 2
+    Z_contour = np.clip(-6 + 0.04 * R2 - 2 * np.exp(-R2 / 40), -7, 2)
+
+    def add_contour_trace(traces_list: list, frame: int) -> None:
+        visible = frame >= learning_complete_frame
+        progress = (frame - learning_complete_frame) / max(1, n_orbit_frames - learning_complete_frame) if visible else 0
+        opacity = min(0.25, 0.08 + 0.17 * progress) if visible else 0
+        traces_list.append(
             go.Surface(
-                x=X, y=Y, z=Z,
+                x=X, y=Y, z=Z_contour,
                 colorscale=[[0, "rgba(40,80,120,0.4)"], [0.5, "rgba(30,90,140,0.3)"], [1, "rgba(20,100,160,0.25)"]],
                 opacity=opacity,
                 showscale=False,
@@ -304,14 +300,35 @@ def create_base_establishment_figure(
                     z=dict(show=True, usecolormap=False, project=dict(z=True), color="rgba(120,180,220,0.4)"),
                 ),
                 name="等高線（学習完了）",
-            ),
+                visible=visible,
+            )
         )
+
+    hitscan_red_frame = 7
+    hitscan_green_frame = 10
+    hitscan_blue_frame = 14
+    connection_order = [0, 2, 1]  # 赤, 緑, 青の順
+    connection_frames = [hitscan_red_frame, hitscan_green_frame, hitscan_blue_frame]
+
+    def _make_probe_trace():
+        return go.Scatter3d(
+            x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
+            mode="markers",
+            marker=dict(size=16, color="white", symbol="circle", line=dict(width=2, color="white"), opacity=1),
+            name="白い球（プローブ）",
+        )
+
+    def _placeholder_scatter3d(visible: bool = False):
+        return go.Scatter3d(x=[0], y=[0], z=[0], mode="markers", marker=dict(size=1), visible=visible, showlegend=False)
+
+    def _placeholder_surface(visible: bool = False):
+        return go.Surface(x=[[0, 0], [0, 0]], y=[[0, 0], [0, 0]], z=[[0, 0], [0, 0]], visible=visible, showscale=False)
 
     frames = []
     for frame in range(n_orbit_frames):
         pos_list = get_orbital_positions(frame)
         traces = []
-        add_contour_landscape(traces, frame)
+        add_contour_trace(traces, frame)
 
         for i, pos in enumerate(pos_list):
             traces.append(
@@ -323,67 +340,39 @@ def create_base_establishment_figure(
                 )
             )
 
-        # 白い球（プローブ）— 球の直後に固定（トレース順を安定化）
-        traces.append(
-            go.Scatter3d(
-                x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
-                mode="markers",
-                marker=dict(size=14, color="white", symbol="circle", line=dict(width=2, color="white"), opacity=1),
-                name="白い球（プローブ）",
-            )
-        )
+        traces.append(_make_probe_trace())
 
-        # HITSCAN — 赤・緑・青の点線で白い球と接続（赤: 7, 緑: 10, 青: 14）
-        # 点線で繋がったまま三つ巴が回転し続ける（各フレームで球の現在位置に線を描画）
-        hitscan_red_frame = 7
-        hitscan_green_frame = 10
-        hitscan_blue_frame = 14
-        connection_order = [0, 2, 1]  # 赤, 緑, 青の順
-        connection_frames = [hitscan_red_frame, hitscan_green_frame, hitscan_blue_frame]
+        # HITSCAN — 常に3本分追加し visible で制御（トレース数固定）
         n_connected = sum(1 for f in connection_frames if frame >= f)
-        for idx in range(n_connected):
-            i = connection_order[idx]
-            pos = pos_list[i]
-            t = np.linspace(0, 1, 60)
-            wave = 0.4 * np.sin(t * 25) * (1 - t)
-            x = probe_position[0] + t * (pos[0] - probe_position[0]) + wave * (pos[1] - probe_position[1]) * 0.15
-            y = probe_position[1] + t * (pos[1] - probe_position[1]) - wave * (pos[0] - probe_position[0]) * 0.15
-            z = probe_position[2] + t * (pos[2] - probe_position[2])
-            dash_len, gap_len = 4, 2
-            n_pts = len(t)
-            x_dash, y_dash, z_dash = [], [], []
-            k = 0
-            while k < n_pts:
-                for _ in range(dash_len):
-                    if k < n_pts:
-                        x_dash.append(float(x[k]))
-                        y_dash.append(float(y[k]))
-                        z_dash.append(float(z[k]))
-                        k += 1
-                if k < n_pts:
-                    x_dash.append(np.nan)
-                    y_dash.append(np.nan)
-                    z_dash.append(np.nan)
-                    k += gap_len
-            traces.append(
-                go.Scatter3d(
-                    x=x_dash, y=y_dash, z=z_dash,
-                    mode="lines",
-                    line=dict(color=colors[i], width=6),
-                    opacity=1.0,
-                    name="HITSCAN 高周波照射" if frame == hitscan_red_frame and idx == 0 else None,
-                    showlegend=(frame == hitscan_red_frame and idx == 0),
+        for idx in range(3):
+            if idx < n_connected:
+                i = connection_order[idx]
+                pos = pos_list[i]
+                t = np.linspace(0, 1, 50)
+                wave = 0.5 * np.sin(t * 25) * (1 - t)
+                x = probe_position[0] + t * (pos[0] - probe_position[0]) + wave * (pos[1] - probe_position[1]) * 0.2
+                y = probe_position[1] + t * (pos[1] - probe_position[1]) - wave * (pos[0] - probe_position[0]) * 0.2
+                z = probe_position[2] + t * (pos[2] - probe_position[2])
+                traces.append(
+                    go.Scatter3d(
+                        x=x, y=y, z=z,
+                        mode="lines",
+                        line=dict(color=colors[i], width=8),
+                        opacity=1.0,
+                        visible=True,
+                        name="HITSCAN 高周波照射" if frame == hitscan_red_frame and idx == 0 else None,
+                        showlegend=(frame == hitscan_red_frame and idx == 0),
+                    )
                 )
-            )
+            else:
+                traces.append(_placeholder_scatter3d(visible=False))
 
-        # HITPLAN — 神経接続が安定し、３つ巴の回転によるマッピングを描く
+        # HITPLAN — 常に4本分追加（軌道1 + 接続線3）
         if frame >= hitplan_start:
-            # ３つ巴の回転によるマッピング（軌道の円・点線）
             theta_map = np.linspace(0, 2 * np.pi, 60)
             x_map = orbit_radius * np.cos(theta_map)
             y_map = orbit_radius * np.sin(theta_map)
             z_map = np.zeros_like(theta_map)
-            # 点線: NaN で区切る
             dash_len, gap_len = 3, 2
             n_pts = len(theta_map)
             x_dash, y_dash, z_dash = [], [], []
@@ -424,8 +413,11 @@ def create_base_establishment_figure(
                         showlegend=(frame == hitplan_start and i == 0),
                     )
                 )
+        else:
+            for _ in range(4):
+                traces.append(_placeholder_scatter3d(visible=False))
 
-        # HITSERIES CICD — 継続学習すると空間の下部に穴があることが見えてくる
+        # HITSERIES CICD — 常に4本分追加（Surface3 + hole1）
         if frame >= hitseries_start:
             for i, pos in enumerate(pos_list):
                 theta = np.linspace(0, 2 * np.pi, 16)
@@ -455,29 +447,15 @@ def create_base_establishment_figure(
                     showlegend=(frame == hitseries_start),
                 )
             )
+        else:
+            for _ in range(3):
+                traces.append(_placeholder_surface(visible=False))
+            traces.append(_placeholder_scatter3d(visible=False))
 
         frames.append(go.Frame(data=traces, name=str(frame), layout=go.Layout(title=dict(text=""))))
 
-    pos_list_0 = get_orbital_positions(0)
-    initial_data = []
-    add_contour_landscape(initial_data, 0)
-    for i, pos in enumerate(pos_list_0):
-        initial_data.append(
-            go.Scatter3d(
-                x=[pos[0]], y=[pos[1]], z=[pos[2]],
-                mode="markers",
-                marker=dict(size=sphere_radius * 15, color=colors[i], opacity=0.8, line=dict(width=2, color="white")),
-                name=["赤", "青", "緑"][i],
-            )
-        )
-    initial_data.append(
-        go.Scatter3d(
-            x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
-            mode="markers",
-            marker=dict(size=12, color="white", symbol="circle", line=dict(width=2, color="white")),
-            name="白い球（接続なし）",
-        )
-    )
+    # initial_data は frames[0] と同じ構造にする（Plotly はトレース数が一致している必要あり）
+    initial_data = frames[0].data if frames else []
 
     fig = go.Figure(data=initial_data, frames=frames)
     fig.update_layout(
