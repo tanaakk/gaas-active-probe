@@ -276,8 +276,9 @@ def create_base_establishment_figure(
     no_connection_end = int(n_orbit_frames * 0.12)
     hitscan_start = no_connection_end
     hitplan_start = int(n_orbit_frames * 0.35)
-    hitseries_start = int(n_orbit_frames * 0.55)
-    learning_complete_frame = int(n_orbit_frames * 0.55)
+    hitseries_start = int(n_orbit_frames * 0.50)  # 形状学習・等高線開始
+    learning_complete_frame = int(n_orbit_frames * 0.50)  # 学習完了→等高線が現れる
+    hole_start = 35  # 回転で空間が摩耗し、穴が発生して見えてくる（フレーム35から）
 
     n_grid = 25
     xg = np.linspace(-10, 10, n_grid)
@@ -439,17 +440,20 @@ def create_base_establishment_figure(
                         name="HITSERIES 形状学習" if frame == hitseries_start and i == 0 else None,
                     )
                 )
-            # 空間の下部に穴があることが見えてくる
-            hole_opacity = 0.3 + 0.4 * min(1.0, (frame - hitseries_start) / max(1, n_orbit_frames - hitseries_start))
-            traces.append(
-                go.Scatter3d(
-                    x=[0], y=[0], z=[-6],
-                    mode="markers",
-                    marker=dict(size=8, color="gold", symbol="diamond", opacity=hole_opacity, line=dict(width=1, color="yellow")),
-                    name="下部の穴（見えてくる）" if frame == hitseries_start else None,
-                    showlegend=(frame == hitseries_start),
+            # 回転で空間が摩耗し、下部に穴が発生して見えてくる（等高線の後に遅れて出現）
+            if frame >= hole_start:
+                hole_opacity = 0.3 + 0.4 * min(1.0, (frame - hole_start) / max(1, n_orbit_frames - hole_start))
+                traces.append(
+                    go.Scatter3d(
+                        x=[0], y=[0], z=[-6],
+                        mode="markers",
+                        marker=dict(size=8, color="gold", symbol="diamond", opacity=hole_opacity, line=dict(width=1, color="yellow")),
+                        name="下部の穴（摩耗で発生）" if frame == hole_start else None,
+                        showlegend=(frame == hole_start),
+                    )
                 )
-            )
+            else:
+                traces.append(_placeholder_scatter3d(visible=False))
         else:
             for _ in range(3):
                 traces.append(_placeholder_surface(visible=False))
