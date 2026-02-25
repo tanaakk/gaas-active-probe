@@ -310,11 +310,14 @@ def create_base_establishment_figure(
     connection_order = [0, 2, 1]  # 赤, 緑, 青の順
     connection_frames = [hitscan_red_frame, hitscan_green_frame, hitscan_blue_frame]
 
+    # GAAS zero cost breakthrough のフレーム0と同じサイズ（probe_radius * 15 = 4.5）
+    probe_size = 0.3 * 15
+
     def _make_probe_trace():
         return go.Scatter3d(
             x=[probe_position[0]], y=[probe_position[1]], z=[probe_position[2]],
             mode="markers",
-            marker=dict(size=16, color="white", symbol="circle", line=dict(width=2, color="white"), opacity=1),
+            marker=dict(size=probe_size, color="white", symbol="circle", line=dict(width=2, color="white"), opacity=1),
             name="白い球（プローブ）",
         )
 
