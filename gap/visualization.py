@@ -333,13 +333,16 @@ def create_base_establishment_figure(
             )
         )
 
-        # HITSCAN — 赤・青・緑の点線を順に接続（赤: 5, 青: 8, 緑: 12）
-        # 表示する線のみ追加（visible はアニメーションで効かないため）
-        hitscan_red_frame = 5
-        hitscan_blue_frame = 8
-        hitscan_green_frame = 12
-        n_connected = (1 if frame >= hitscan_red_frame else 0) + (1 if frame >= hitscan_blue_frame else 0) + (1 if frame >= hitscan_green_frame else 0)
-        for i in range(n_connected):
+        # HITSCAN — 赤・緑・青の点線で白い球と接続（赤: 7, 緑: 10, 青: 14）
+        # 点線で繋がったまま三つ巴が回転し続ける（各フレームで球の現在位置に線を描画）
+        hitscan_red_frame = 7
+        hitscan_green_frame = 10
+        hitscan_blue_frame = 14
+        connection_order = [0, 2, 1]  # 赤, 緑, 青の順
+        connection_frames = [hitscan_red_frame, hitscan_green_frame, hitscan_blue_frame]
+        n_connected = sum(1 for f in connection_frames if frame >= f)
+        for idx in range(n_connected):
+            i = connection_order[idx]
             pos = pos_list[i]
             t = np.linspace(0, 1, 60)
             wave = 0.4 * np.sin(t * 25) * (1 - t)
@@ -368,8 +371,8 @@ def create_base_establishment_figure(
                     mode="lines",
                     line=dict(color=colors[i], width=6),
                     opacity=1.0,
-                    name="HITSCAN 高周波照射" if frame == hitscan_red_frame and i == 0 else None,
-                    showlegend=(frame == hitscan_red_frame and i == 0),
+                    name="HITSCAN 高周波照射" if frame == hitscan_red_frame and idx == 0 else None,
+                    showlegend=(frame == hitscan_red_frame and idx == 0),
                 )
             )
 
