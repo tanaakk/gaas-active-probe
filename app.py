@@ -142,7 +142,7 @@ if view_mode == "HITSCAN/HITPLAN/HITSERIES（→ モニタリング）":
 
     1. **HITSCAN** — 白い球が**一つずつ**、赤・青・緑の順に接続。赤→青→緑の順でパルスが増えていく。
     2. **HITPLAN** — 白い球と接続された**３つ巴の回転によるマッピング**。神経接続が安定するにつれ、軌道円の不透明度を徐々に上げ、回転によるマッピングが描かれる。
-    3. **HITSERIES CICD** — 神経パルスによる形状観測・継続学習すると、**空間の下部に穴があることが見えてくる**。
+    3. **HITSERIES CICD** — 三つの超重量を三つ巴で干渉させ続けると、空間が摩耗し、最後に**穴が自然に開く**。
 
     **学習が済むと等高線が現れる**。▶ 再生でアニメーション表示。
     """)
@@ -178,7 +178,8 @@ elif view_mode == "GAAS zero cost breakthrough（→ すり抜け）":
 
     if fig is not None:
         st.markdown("""
-        **GAAS zero cost breakthrough** — 漏斗型の領域は凸凹しているため、三つの玉は**近づいたり離れたり**しながら、
+        **GAAS zero cost breakthrough** — イノベーションとは、巨大な鉄球を三つ巴にさせて空間を摩耗させ、
+        空いたところをすり抜けるゲームである。漏斗型の領域は凸凹しているため、三つの玉は**近づいたり離れたり**しながら、
         穴には入れない状態が続く（スロープトイのように並行ではない）。その隙の一瞬を、白い球が潜り抜けていく。
         すり抜ける瞬間は**負圧**を用いるため、コストが**ゼロあるいはマイナス**になる。
         白い球はすり抜けた後に**低い位置**で栄養を急激に蓄え、上にあった三つ巴の球の穴よりも**大きくなる**。
@@ -248,7 +249,7 @@ if view_mode == "HITSCAN/HITPLAN/HITSERIES（→ モニタリング）":
     st.sidebar.markdown("- 📡 **赤・青・緑の点線** — HITSCAN（白い球が赤→青→緑と一つずつ接続）")
     st.sidebar.markdown("- 🔗 **実線＋軌道円** — HITPLAN（白い球と接続された３つ巴の回転によるマッピング）")
     st.sidebar.markdown("- 🌐 **半透明面** — HITSERIES（形状観測・継続学習）")
-    st.sidebar.markdown("- 💛 **下部の穴** — 継続学習で見えてくる")
+    st.sidebar.markdown("- 💛 **下部の穴** — 三つ巴干渉で空間が摩耗し、最後に自然に開く")
     st.sidebar.markdown("- 📐 **等高線** — 学習完了後に現れるランドスケープ")
 elif view_mode == "GAAS zero cost breakthrough（→ すり抜け）":
     st.sidebar.markdown("- 🔴 **赤球** — 三つ巴の1")
