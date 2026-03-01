@@ -19,7 +19,7 @@ from gap.visualization import (
 
 st.set_page_config(
     page_title="GAP — GAAS Active Probe",
-    page_icon="🔮",
+    page_icon="favicon.png",
     layout="wide",
 )
 
